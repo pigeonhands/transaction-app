@@ -1,19 +1,48 @@
+use std::ops::Mul;
+
 use super::{Transaction, TransactionType};
 use anyhow::Context;
-use futures::stream::Stream;
+use futures::{stream::Stream, StreamExt};
 use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
+use rust_decimal_macros::dec;
 use serde::Serialize;
 use sqlx::{sqlite::Sqlite, types::Decimal, FromRow, Pool};
+
+static STORAGE_MUL : Decimal = dec!(10000);
+static DECIMAL_SCALE : u32 = 4;
 
 #[derive(Debug, PartialEq, FromRow, Serialize)]
 pub struct Client {
     #[serde(rename = "client")]
     pub id: u16,
-    pub available: f64,
-    pub held: f64,
-    pub total: f64,
+    pub available: Decimal,
+    pub held: Decimal,
+    pub total: Decimal,
     pub locked: bool,
 }
+
+#[derive(Debug, PartialEq, FromRow, Serialize)]
+struct ClientDb {
+    #[serde(rename = "client")]
+    pub id: u16,
+    pub available: i64,
+    pub held: i64,
+    pub total: i64,
+    pub locked: bool,
+}
+
+impl Into<Client> for ClientDb {
+    fn into(self) -> Client {
+        Client {
+            id: self.id,
+            available: Decimal::new(self.available, DECIMAL_SCALE),
+            held: Decimal::new(self.held, DECIMAL_SCALE),
+            total: Decimal::new(self.total, DECIMAL_SCALE),
+            locked: self.locked
+        }
+    }
+}
+
 
 #[derive(FromRow)]
 struct DBTransaction {
@@ -21,8 +50,10 @@ struct DBTransaction {
     #[sqlx(rename = "type")]
     pub transaction_type: String,
     pub client_id: u16,
-    pub amount: Option<f64>,
+    pub amount: Option<i64>,
 }
+
+
 
 impl Into<Transaction> for DBTransaction {
     fn into(self) -> Transaction {
@@ -33,10 +64,11 @@ impl Into<Transaction> for DBTransaction {
             client_id: self.client_id,
             amount: self
                 .amount
-                .map(|a| Decimal::from_f64(a).expect("Failed to convert f64 to decimal")),
+                .map(|a|  Decimal::new(a, DECIMAL_SCALE)),
         }
     }
 }
+
 
 pub struct TransactionService {
     pool: Pool<Sqlite>,
@@ -52,18 +84,21 @@ impl TransactionService {
 
     pub async fn get_client(&self, client_id: u16) -> anyhow::Result<Option<Client>> {
         let client =
-            sqlx::query_as("SELECT *, (held+available) as total from Clients WHERE id=?  LIMIT 1")
+            sqlx::query_as::<_, ClientDb>("SELECT *, (held+available) as total from [Clients] WHERE id=? LIMIT 1")
                 .bind(client_id)
                 .fetch_optional(&self.pool)
-                .await?;
-        Ok(client)
+                .await
+                .context("Failed to get client")?;
+        Ok(client.map(|c| c.into()))
     }
 
     pub async fn get_clients(&self) -> impl Stream<Item = Result<Client, sqlx::Error>> + '_ {
-        sqlx::query_as("SELECT *, (held+available) as total from Clients").fetch(&self.pool)
+        sqlx::query_as::<_, ClientDb>("SELECT *, (held+available) as total from Clients").fetch(&self.pool)
+            .map(|cstream_client| cstream_client.map(|c| c.into()) )
     }
     pub async fn get_clients_vec(&self) -> Result<Vec<Client>, sqlx::Error> {
         sqlx::query_as("SELECT *, (held+available) as total from Clients").fetch_all(&self.pool).await
+            .map(|cstream_client : Vec<ClientDb>| cstream_client.into_iter().map(|c| c.into()).collect() )
     }
 
     pub async fn get_transaction(
@@ -88,14 +123,8 @@ impl TransactionService {
     }
 
     pub async fn process_transaction(&self, transaction: &Transaction) -> anyhow::Result<()> {
-        //sqlite dosent support "decimal" so covert to f64
-        let amount_f64 = match transaction.amount {
-            Some(a) => Some(
-                a.to_f64()
-                    .ok_or_else(|| anyhow::anyhow!("Could not convert decimal to f64"))?,
-            ),
-            None => None,
-        };
+        //sqlite dosent support "decimal" so covert to u64
+        let amount_i64 = transaction.amount.map(|a| a.mul(STORAGE_MUL).to_i64()).flatten();
 
         let client = self.get_client(transaction.client_id).await?;
         let mut tx = self.pool.begin().await?;
@@ -108,12 +137,13 @@ impl TransactionService {
             Some(c) => c,
             None => {
                 // "RETRUNING" in sqlite has a bug that converts REAL to INTEGER. Double query as a workaround.
-                sqlx::query_as("INSERT INTO Clients VALUES(?, 0, 0, false);SELECT *, (held+available) as total FROM Clients WHERE ID=? LIMIT 1")
+                sqlx::query_as::<_, ClientDb>("INSERT INTO Clients VALUES(?, 0, 0, false) RETURNING *, (held+available) as total")
                     .bind(transaction.client_id)
                     .bind(transaction.client_id)
                     .fetch_one(&mut tx)
                     .await
                     .context("Failed to create client")?
+                    .into()
             }
         };
 
@@ -126,7 +156,7 @@ impl TransactionService {
                 .bind(transaction.id)
                 .bind(transaction.transaction_type.to_str())
                 .bind(transaction.client_id)
-                .bind(amount_f64)
+                .bind(amount_i64)
                 .execute(&mut tx)
                 .await
                 .context("Failed to insert transaction")?;
@@ -134,7 +164,7 @@ impl TransactionService {
 
         match &transaction.transaction_type {
             TransactionType::Deposit => {
-                let amount = amount_f64
+                let amount = amount_i64
                     .ok_or_else(|| anyhow::anyhow!("Deposit transaction requires an amount"))?;
 
                 self.process_deposit(&mut tx, client, amount)
@@ -142,7 +172,7 @@ impl TransactionService {
                     .context("Failed to process deposit")?;
             }
             TransactionType::Withdrawal => {
-                let amount = amount_f64
+                let amount = amount_i64
                     .ok_or_else(|| anyhow::anyhow!("Deposit transaction requires an amount"))?;
 
                 self.process_withdraw(&mut tx, transaction.id, client, amount)
@@ -172,10 +202,10 @@ impl TransactionService {
         &'a self,
         tx: &mut sqlx::Transaction<'a, Sqlite>,
         client: Client,
-        amount: f64,
+        amount: i64,
     ) -> anyhow::Result<()> {
         sqlx::query("UPDATE Clients SET available = (available + ?) WHERE id=?")
-            .bind(amount.to_f64())
+            .bind(amount)
             .bind(client.id)
             .execute(tx)
             .await?;
@@ -188,7 +218,7 @@ impl TransactionService {
         tx: &mut sqlx::Transaction<'a, Sqlite>,
         _transaction_id: u32,
         client: Client,
-        amount: f64,
+        amount: i64,
     ) -> anyhow::Result<()> {
         sqlx::query("UPDATE Clients SET available = (available - ?) WHERE id=? AND available >= ?")
             .bind(amount)
@@ -210,18 +240,12 @@ impl TransactionService {
             None => return Ok(()),
         };
 
-        let amount_f64 = match disputed_transaction.amount {
-            Some(a) => Some(
-                a.to_f64()
-                    .ok_or_else(|| anyhow::anyhow!("Could not convert decimal to f64"))?,
-            ),
-            None => None,
-        }
-        .ok_or_else(|| anyhow::anyhow!("No amount in disputed transaction"))?;
+        let amount_i64 = disputed_transaction.amount.map(|a| a.mul(STORAGE_MUL).to_i64()).flatten().ok_or_else(|| anyhow::anyhow!("No amount in disputed transaction"))?;
+
 
         sqlx::query("UPDATE Clients SET available = (available - ?), held = (held + ?) WHERE id=?")
-            .bind(amount_f64)
-            .bind(amount_f64)
+            .bind(amount_i64)
+            .bind(amount_i64)
             .bind(client.id)
             .execute::<&mut sqlx::Transaction<'_, _>>(tx)
             .await?;
@@ -245,18 +269,11 @@ impl TransactionService {
             None => return Ok(()),
         };
 
-        let amount_f64 = match disputed_transaction.amount {
-            Some(a) => Some(
-                a.to_f64()
-                    .ok_or_else(|| anyhow::anyhow!("Could not convert decimal to f64"))?,
-            ),
-            None => None,
-        }
-        .ok_or_else(|| anyhow::anyhow!("No amount in disputed transaction"))?;
+        let amount_i64 = disputed_transaction.amount.map(|a| a.mul(STORAGE_MUL).to_i64()).flatten().ok_or_else(|| anyhow::anyhow!("No amount in disputed transaction"))?;
 
         sqlx::query("UPDATE Clients SET available = available + ?, held = held - ? WHERE id=?")
-            .bind(amount_f64)
-            .bind(amount_f64)
+            .bind(amount_i64)
+            .bind(amount_i64)
             .bind(client.id)
             .execute::<&mut sqlx::Transaction<'_, _>>(tx)
             .await?;
@@ -279,19 +296,13 @@ impl TransactionService {
             None => return Ok(()),
         };
 
-        let amount_f64 = match disputed_transaction.amount {
-            Some(a) => Some(
-                a.to_f64()
-                    .ok_or_else(|| anyhow::anyhow!("Could not convert decimal to f64"))?,
-            ),
-            None => None,
-        }
-        .ok_or_else(|| anyhow::anyhow!("No amount in disputed transaction"))?;
+        let amount_i64 = disputed_transaction.amount.map(|a| a.mul(STORAGE_MUL).to_i64()).flatten().ok_or_else(|| anyhow::anyhow!("No amount in disputed transaction"))?;
+
 
         sqlx::query("UPDATE Clients SET held = held - ?, locked=true WHERE id=?")
-            .bind(amount_f64)
+            .bind(amount_i64)
             .bind(client.id)
-            .bind(amount_f64)
+            .bind(amount_i64)
             .execute::<&mut sqlx::Transaction<'_, _>>(tx)
             .await?;
 
@@ -312,6 +323,8 @@ mod tests {
     use sqlx::sqlite::SqliteConnectOptions;
     use std::{str::FromStr};
     use rust_decimal::{Decimal, prelude::FromPrimitive};
+    use rust_decimal_macros::dec;
+
 
 
     async fn create_service() -> TransactionService{
@@ -348,8 +361,8 @@ mod tests {
                 Transaction{id:4, transaction_type: TransactionType::Deposit, client_id: 2, amount: Decimal::from_f64(10.5563) },
             ],
             vec![
-                Client { id: 1, available: 27.4797, held: 0.0, total: 27.4797, locked: false },
-                Client { id: 2, available: 10.5563, held: 0.0, total: 10.5563, locked: false }
+                Client { id: 1, available: dec!(27.4797), held: dec!(0.0), total: dec!(27.4797), locked: false },
+                Client { id: 2, available: dec!(10.5563), held: dec!(0.0), total: dec!(10.5563), locked: false }
             ]
         ).await;
     }
@@ -376,9 +389,9 @@ mod tests {
 
             ],
             vec![
-                Client { id: 1, available: 15.8063, held: 0.0, total: 15.8063, locked: false },
-                Client { id: 2, available: 18.2196, held: 0.0, total: 18.2196, locked: false },
-                Client { id: 3, available: 3.4234, held: 0.0, total: 3.4234, locked: false },
+                Client { id: 1, available: dec!(15.8063), held: dec!(0.0), total: dec!(15.8063), locked: false },
+                Client { id: 2, available: dec!(18.2196), held: dec!(0.0), total: dec!(18.2196), locked: false },
+                Client { id: 3, available: dec!(3.4234), held: dec!(0.0), total: dec!(3.4234), locked: false },
             ]
         ).await;
     }
@@ -412,9 +425,9 @@ mod tests {
                 Transaction{id:8, transaction_type: TransactionType::Dispute, client_id: 3, amount: None },
             ],
             vec![
-                Client { id: 1, available: 15.8063, held: 0.0, total: 15.8063, locked: false },
-                Client { id: 2, available:7.6633, held: 0.0, total: 7.6633, locked: true },
-                Client { id: 3, available: 2.1234, held: 1.3, total: 3.4234, locked: false },
+                Client { id: 1, available: dec!(15.8063), held: dec!(0.0), total: dec!(15.8063), locked: false },
+                Client { id: 2, available: dec!(7.6633), held: dec!(0.0), total: dec!(7.6633), locked: true },
+                Client { id: 3, available: dec!(2.1234), held: dec!(1.3), total: dec!(3.4234), locked: false },
             ]
         ).await;
     }
