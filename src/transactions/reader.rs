@@ -24,7 +24,7 @@ impl<R: io::Read> TransactionReader<R> {
 #[cfg(test)]
 mod tests {
     use crate::transactions::{Transaction, TransactionReader, TransactionType};
-    use rust_decimal::{Decimal, prelude::FromPrimitive};
+    use rust_decimal::{prelude::FromPrimitive, Decimal};
     use std::io;
 
     #[test]

@@ -15,6 +15,7 @@ withdrawal, 2, 5, 3.0
 will print 
 
 ```
+client,available,held,total,
 1,1.5,0.0,1.5,false
 2,2.0,0.0,2.0,false
 ```
@@ -22,6 +23,7 @@ to stdout.
 
 
 The transactions and client state are stored in memory so the same state will **NOT** be used across diffrent transaction csv files.
+
 
 -------
 

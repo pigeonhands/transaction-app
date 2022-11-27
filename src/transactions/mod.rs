@@ -6,7 +6,7 @@ use rust_decimal::Decimal;
 pub use processor::TransactionService;
 pub use reader::*;
 
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub enum TransactionType {
@@ -52,4 +52,14 @@ pub struct Transaction {
     #[serde(rename = "client")]
     pub client_id: u16,
     pub amount: Option<Decimal>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct Client {
+    #[serde(rename = "client")]
+    pub id: u16,
+    pub available: Decimal,
+    pub held: Decimal,
+    pub total: Decimal,
+    pub locked: bool,
 }
