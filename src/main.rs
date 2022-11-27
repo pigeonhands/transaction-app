@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     let mut transaction_reader = get_transaction_reader()?;
 
     let mut transaction_svc = {
-        let options = SqliteConnectOptions::from_str("sqlite://tx.db")?.create_if_missing(true);
+        let options = SqliteConnectOptions::from_str("sqlite://:memory:")?.create_if_missing(true);
         let db_pool = sqlx::sqlite::SqlitePool::connect_with(options).await?;
         TransactionService::new(db_pool)
             .await
