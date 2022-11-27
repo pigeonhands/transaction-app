@@ -127,11 +127,10 @@ impl TransactionService {
             TransactionType::Deposit | TransactionType::Withdrawal
         );
 
-        // Ignore locked clients and create client if dosent exist
+        // Ignore locked clients and create client for basic transactions if dosent exist
         let client = match client {
             Some(c@Client { locked: false, .. }) => Some(c),
             None if is_basic_transaction => {
-                // "RETRUNING" in sqlite has a bug that converts REAL to INTEGER. Double query as a workaround.
                 Some(sqlx::query_as::<_, ClientDb>("INSERT INTO Clients VALUES(?, 0, 0, false) RETURNING *, (held+available) as total")
                     .bind(transaction.client_id)
                     .bind(transaction.client_id)

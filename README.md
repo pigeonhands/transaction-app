@@ -24,9 +24,16 @@ to stdout.
 
 The transactions and client state are stored in memory so the same state will **NOT** be used across diffrent transaction csv files.
 
+## Assumptions
+---
+1) The `client` in the `dispute`, `resolve` and `chargeback` transaction is the client performing the `dispute`
+2) Locked accounts can not perform any action.
 
+## Larger transactions / Keeping state
 -------
 
-Although the apps current usage does not benifit from `async`/`await` as it is taking transactions from a single io source, the `TransactionService` has been written in an `async` way as to possably be used with other io sources such as a tcp stream.
+Although the apps current usage does not benefit from `async`/`await` as it is taking transactions from a single io source, the `TransactionService` has been written in an `async` way as to possably be used with other io sources such as a tcp stream.
 
 The application is using `sqlite` to process the transactions. For larger transaction files, another database such as `PostgreSQL` should be used.
+
+
