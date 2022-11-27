@@ -21,7 +21,7 @@ will print
 to stdout.
 
 
-The transactions and client state are stored in `transactions.db` so the same state will be used across diffrent transaction csv files.
+The transactions and client state are stored in memory so the same state will **NOT** be used across diffrent transaction csv files.
 
 -------
 
