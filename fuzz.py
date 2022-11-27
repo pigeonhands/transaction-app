@@ -3,8 +3,13 @@ import random
 import csv
 from decimal import *
 
+
+NUMBER_OF_CLIENTS = 10
+NUMBER_OF_TRANSACTIONS = 10000
+
 BASIC_TX = ["deposit", "withdrawal"]
 DISPUTE_TX =  ["dispute", "resolve", "chargeback"]
+
 class Transaction():
     def __init__(self, client, type, tx, amount):
         self.client = client
@@ -21,7 +26,7 @@ class Transaction():
         tx_num = int(tx if t in BASIC_TX else random.randint(0, int(tx)))
 
         return cls(
-            int(random.randint(1, 30)),
+            int(random.randint(1, NUMBER_OF_CLIENTS)),
             t,
             tx_num,
             Decimal(random.randint(100, 100000)) / 10000,
@@ -51,8 +56,6 @@ class Processor:
     def process_transaction(self, t: Transaction):
         if t.type in BASIC_TX:
             self.transactions[t.tx] =t
-        print(t.type, t.amount)
-
         m = getattr(self, f"handle_{t.type}")
         m(t)
 
@@ -115,7 +118,7 @@ def create_csv(fname, p:Processor):
     with open(fname, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=['type','client','tx','amount'])
         w.writeheader()
-        for tx_id in range(100):
+        for tx_id in range(NUMBER_OF_TRANSACTIONS):
             tx = Transaction.random(tx_id)
             existing = p.transactions.get(tx.tx)
             if existing and existing.disputed:
@@ -137,9 +140,6 @@ def main():
     reader = csv.DictReader(output.splitlines(), delimiter=",")
     output_clients = [Client(int(d['client']), Decimal(d['available']), Decimal(d['held']), d['locked'] == 'true', Decimal(d['total'])) for d in reader]
     output_clients.sort(key=lambda c: c.id)
-
-    for row in output_clients:
-        print(row)
     
     fails = 0
     for expected, out in zip(fizz_clients, output_clients):
