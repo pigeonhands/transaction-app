@@ -1,10 +1,10 @@
 use super::Transaction;
 use std::io;
-pub struct TransactionReader<R: io::BufRead> {
+pub struct TransactionReader<R: io::Read> {
     reader: csv::Reader<R>,
 }
 
-impl<R: io::BufRead> TransactionReader<R> {
+impl<R: io::Read> TransactionReader<R> {
     pub fn new(reader: R) -> Self {
         let reader = csv::ReaderBuilder::new()
             .has_headers(true)
