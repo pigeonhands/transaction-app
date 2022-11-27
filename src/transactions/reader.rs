@@ -33,7 +33,9 @@ mod tests {
 type, client, tx, amount
 deposit, 1, 1, 1.0
 withdrawal, 1, 4, 1.5
-dispute, 2, 5"#;
+dispute, 2, 5
+resolve, 1, 1
+chargeback, 1, 1"#;
 
         let mut transaction_reader = {
             let reader = io::BufReader::new(io::Cursor::new(test_csv));
@@ -64,6 +66,18 @@ dispute, 2, 5"#;
                     id: 5,
                     transaction_type: TransactionType::Dispute,
                     client_id: 2,
+                    amount: None
+                },
+                Transaction {
+                    id: 1,
+                    transaction_type: TransactionType::Resolve,
+                    client_id: 1,
+                    amount: None
+                },
+                Transaction {
+                    id: 1,
+                    transaction_type: TransactionType::Chargeback,
+                    client_id: 1,
                     amount: None
                 }
             ]
