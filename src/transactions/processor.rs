@@ -98,6 +98,7 @@ impl TransactionService {
         };
 
         let client = self.get_client(transaction.client_id).await?;
+        let mut tx = self.pool.begin().await?;
 
         // Ignore locked clients and create client if dosent exist
         let client = match client {
@@ -110,13 +111,12 @@ impl TransactionService {
                 sqlx::query_as("INSERT INTO Clients VALUES(?, 0, 0, false);SELECT *, (held+available) as total FROM Clients WHERE ID=? LIMIT 1")
                     .bind(transaction.client_id)
                     .bind(transaction.client_id)
-                    .fetch_one(&self.pool)
+                    .fetch_one(&mut tx)
                     .await
                     .context("Failed to create client")?
             }
         };
 
-        let mut tx = self.pool.begin().await?;
 
         if matches!(
             transaction.transaction_type,
