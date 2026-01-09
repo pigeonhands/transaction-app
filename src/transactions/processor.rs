@@ -3,10 +3,10 @@ use std::ops::Mul;
 use super::{Client, Transaction, TransactionType};
 use anyhow::Context;
 use futures::{stream::Stream, StreamExt};
-use rust_decimal::prelude::{ToPrimitive};
+use rust_decimal::prelude::{Decimal, ToPrimitive};
 use rust_decimal_macros::dec;
 use serde::Serialize;
-use sqlx::{sqlite::Sqlite, types::Decimal, FromRow, Pool};
+use sqlx::{sqlite::Sqlite, FromRow, Pool};
 
 static DECIMAL_SCALE: u32 = 4;
 static STORAGE_MUL: Decimal = dec!(10000);
@@ -82,14 +82,6 @@ impl TransactionService {
             .fetch(&self.pool)
             .map(|cstream_client| cstream_client.map(|c| c.into()))
     }
-    pub async fn get_clients_vec(&self) -> Result<Vec<Client>, sqlx::Error> {
-        sqlx::query_as("SELECT *, (held+available) as total from Clients")
-            .fetch_all(&self.pool)
-            .await
-            .map(|cstream_client: Vec<ClientDb>| {
-                cstream_client.into_iter().map(|c| c.into()).collect()
-            })
-    }
 
     pub async fn get_transaction(
         &self,
@@ -134,7 +126,7 @@ impl TransactionService {
                 Some(sqlx::query_as::<_, ClientDb>("INSERT INTO Clients VALUES(?, 0, 0, false) RETURNING *, (held+available) as total")
                     .bind(transaction.client_id)
                     .bind(transaction.client_id)
-                    .fetch_one(&mut tx)
+                    .fetch_one(&mut *tx)
                     .await
                     .context("Failed to create client")?
                     .into())
@@ -151,7 +143,7 @@ impl TransactionService {
                 .bind(transaction.transaction_type.to_str())
                 .bind(transaction.client_id)
                 .bind(amount_i64)
-                .execute(&mut tx)
+                .execute(&mut *tx)
                 .await
                 .context("Failed to insert transaction")?;
         }
@@ -205,7 +197,7 @@ impl TransactionService {
         sqlx::query("UPDATE Clients SET available = (available + ?) WHERE id=?")
             .bind(amount)
             .bind(client.id)
-            .execute(tx)
+            .execute(&mut **tx)
             .await?;
 
         Ok(())
@@ -222,7 +214,7 @@ impl TransactionService {
             .bind(amount)
             .bind(client.id)
             .bind(amount)
-            .execute(tx)
+            .execute(&mut **tx)
             .await?;
         Ok(())
     }
@@ -247,12 +239,12 @@ impl TransactionService {
             .bind(amount_i64)
             .bind(amount_i64)
             .bind(disputed_transaction.client_id)
-            .execute::<&mut sqlx::Transaction<'_, _>>(tx)
+            .execute(&mut **tx)
             .await?;
 
         sqlx::query("INSERT INTO Disputes VALUES(?)")
             .bind(transaction_id)
-            .execute(tx)
+            .execute(&mut **tx)
             .await?;
 
         Ok(())
@@ -263,7 +255,6 @@ impl TransactionService {
         tx: &mut sqlx::Transaction<'a, Sqlite>,
         transaction_id: u32,
     ) -> anyhow::Result<()> {
-        
         let disputed_transaction = match self.get_dispute(transaction_id).await? {
             Some(t) => t,
             None => return Ok(()),
@@ -279,12 +270,12 @@ impl TransactionService {
             .bind(amount_i64)
             .bind(amount_i64)
             .bind(disputed_transaction.client_id)
-            .execute::<&mut sqlx::Transaction<'_, _>>(tx)
+            .execute(&mut **tx)
             .await?;
 
         sqlx::query("DELETE FROM Disputes WHERE transaction_id=?")
             .bind(transaction_id)
-            .execute(tx)
+            .execute(&mut **tx)
             .await?;
         Ok(())
     }
@@ -309,12 +300,12 @@ impl TransactionService {
             .bind(amount_i64)
             .bind(disputed_transaction.client_id)
             .bind(amount_i64)
-            .execute::<&mut sqlx::Transaction<'_, _>>(tx)
+            .execute(&mut **tx)
             .await?;
 
         sqlx::query("DELETE FROM Disputes WHERE transaction_id=?")
             .bind(transaction_id)
-            .execute(tx)
+            .execute(&mut **tx)
             .await?;
 
         Ok(())

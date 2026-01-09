@@ -8,9 +8,9 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
-csv = "1.1"
-rust_decimal = { version = "1.26.1", features = ["serde-str"] }
-rust_decimal_macros = "1.26"
-tokio = { version = "1.20.1", features = ["macros", "rt-multi-thread", "io-util"] }
-sqlx = { version = "0.6.1", features = [ "runtime-tokio-native-tls" ,"decimal",  "sqlite" ] }
-futures = "0.3.24"
+csv = "1.4.0"
+rust_decimal = { version = "1.39", features = ["serde-str"] }
+rust_decimal_macros = "1.39"
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "io-util"] }
+sqlx = { version = "0.8.6", features = [ "runtime-tokio-native-tls" , "sqlite" ] }
+futures = "0.3.31"
